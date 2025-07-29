@@ -1,11 +1,20 @@
 import 'package:chameleonultragui/bridge/chameleon.dart';
-import 'package:chameleonultragui/gui/component/toggle_buttons.dart';
+import 'package:chameleonultragui/gui/menu/slot_edit.dart';
+import 'package:chameleonultragui/gui/menu/slot_export.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:chameleonultragui/main.dart';
+import 'package:chameleonultragui/gui/menu/confirm_delete.dart';
 
 // Localizations
-import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
+
+class SlotNames {
+  String hf;
+  String lf;
+
+  SlotNames({this.hf = "", this.lf = ""});
+}
 
 class SlotSettings extends StatefulWidget {
   final int slot;
@@ -18,16 +27,10 @@ class SlotSettings extends StatefulWidget {
 }
 
 class SlotSettingsState extends State<SlotSettings> {
-  bool isRun = false;
-  bool isEnabled = false;
-  late bool isDetection;
-  late int detectionCount;
-  late bool isGen1a;
-  late bool isGen2;
-  late bool isAntiColl;
-  late MifareClassicWriteMode writeMode;
-  String hfName = "";
-  String lfName = "";
+  EnabledSlotInfo enabledSlot = EnabledSlotInfo();
+  SlotTypes slotTypes = SlotTypes();
+  SlotNames names = SlotNames();
+  TagFrequency exportFrequency = TagFrequency.hf;
 
   @override
   void initState() {
@@ -37,51 +40,49 @@ class SlotSettingsState extends State<SlotSettings> {
   Future<void> fetchInfo() async {
     var appState = context.read<ChameleonGUIState>();
     var localizations = AppLocalizations.of(context)!;
-    if (hfName.isEmpty) {
-      try {
-        hfName = (await appState.communicator!
-                .getSlotTagName(widget.slot, TagFrequency.hf))
-            .trim();
-      } catch (_) {}
 
-      if (hfName.isEmpty) {
-        hfName = localizations.empty;
-      }
+    await appState.communicator!.activateSlot(widget.slot);
 
-      setState(() {});
-    }
-
-    if (lfName.isEmpty) {
-      try {
-        lfName = (await appState.communicator!
-                .getSlotTagName(widget.slot, TagFrequency.lf))
-            .trim();
-      } catch (_) {}
-
-      if (lfName.isEmpty) {
-        lfName = localizations.empty;
-      }
-
-      setState(() {});
-    }
-
-    if (!isRun) {
-      await appState.communicator!.activateSlot(widget.slot);
-      isEnabled = (await appState.communicator!.getEnabledSlots())[widget.slot];
-      var data = (await appState.communicator!.getMf1EmulatorConfig());
-      isDetection = data.$1;
-      if (isDetection) {
-        detectionCount = await appState.communicator!.getMf1DetectionCount();
+    try {
+      String name = (await appState.communicator!
+              .getSlotTagName(widget.slot, TagFrequency.hf))
+          .trim();
+      if (name.isEmpty) {
+        names.hf = localizations.empty;
       } else {
-        detectionCount = 0;
+        names.hf = name;
       }
-      isGen1a = data.$2;
-      isGen2 = data.$3;
-      isAntiColl = data.$4;
-      writeMode = data.$5;
-      isRun = true;
-      setState(() {});
+    } catch (_) {}
+
+    try {
+      String name = (await appState.communicator!
+              .getSlotTagName(widget.slot, TagFrequency.lf))
+          .trim();
+      if (name.isEmpty) {
+        names.lf = localizations.empty;
+      } else {
+        names.lf = name;
+      }
+    } catch (_) {}
+
+    enabledSlot = (await appState.communicator!.getEnabledSlots())[widget.slot];
+    slotTypes = (await appState.communicator!.getSlotTagTypes())[widget.slot];
+
+    setState(() {});
+  }
+
+  void updateSlot(String name, TagFrequency frequency, TagType type) {
+    if (frequency == TagFrequency.hf) {
+      names.hf = name;
+      slotTypes.hf = type;
+    } else if (frequency == TagFrequency.lf) {
+      names.lf = name;
+      slotTypes.lf = type;
     }
+
+    widget.refresh(widget.slot);
+
+    setState(() {});
   }
 
   @override
@@ -90,9 +91,10 @@ class SlotSettingsState extends State<SlotSettings> {
     var localizations = AppLocalizations.of(context)!;
 
     return FutureBuilder(
-        future: fetchInfo(),
+        future: (names.hf.isNotEmpty) ? Future.value(null) : fetchInfo(),
         builder: (BuildContext context, AsyncSnapshot<void> snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting && !isRun) {
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              names.hf.isEmpty) {
             return AlertDialog(
                 title: Text(localizations.slot_settings),
                 content: const SingleChildScrollView(
@@ -105,7 +107,28 @@ class SlotSettingsState extends State<SlotSettings> {
                     '${localizations.error}: ${snapshot.error.toString()}'));
           } else {
             return AlertDialog(
-                title: Text(localizations.slot_settings),
+                title: Row(
+                  children: [
+                    Text(localizations.slot_settings),
+                    const Spacer(
+                      flex: 1,
+                    ),
+                    IconButton(
+                      onPressed: (slotTypes.notMatch())
+                          ? () {
+                              showDialog<String>(
+                                  context: context,
+                                  builder: (BuildContext context) =>
+                                      SlotExportMenu(
+                                          names: names,
+                                          enabledSlotInfo: enabledSlot,
+                                          slotTypes: slotTypes));
+                            }
+                          : null,
+                      icon: const Icon(Icons.download),
+                    ),
+                  ],
+                ),
                 content: SingleChildScrollView(
                     child: Column(children: [
                   Row(
@@ -115,11 +138,53 @@ class SlotSettingsState extends State<SlotSettings> {
                       Expanded(
                           child: OutlinedButton(
                         onPressed: null,
-                        child: Text(hfName),
+                        child: Text(names.hf),
                       )),
                       const SizedBox(width: 8),
+                      Switch(
+                        value: enabledSlot.hf,
+                        onChanged: (bool value) async {
+                          await appState.communicator!
+                              .enableSlot(widget.slot, TagFrequency.hf, value);
+
+                          setState(() {
+                            enabledSlot.hf = value;
+                          });
+
+                          widget.refresh(widget.slot);
+                        },
+                      ),
                       IconButton(
                         onPressed: () async {
+                          showDialog<String>(
+                              context: context,
+                              builder: (BuildContext context) => SlotEditMenu(
+                                  name: names.hf,
+                                  isEnabled: enabledSlot.hf,
+                                  slotType: slotTypes.hf,
+                                  frequency: TagFrequency.hf,
+                                  slot: widget.slot,
+                                  update: updateSlot));
+                        },
+                        icon: const Icon(Icons.edit),
+                      ),
+                      IconButton(
+                        onPressed: () async {
+                          if (appState.sharedPreferencesProvider
+                                  .getConfirmDelete() ==
+                              true) {
+                            var confirm = await showDialog(
+                              context: context,
+                              builder: (BuildContext context) {
+                                return ConfirmDeletionMenu(
+                                    thingBeingDeleted: names.hf);
+                              },
+                            );
+
+                            if (confirm != true) {
+                              return;
+                            }
+                          }
                           await appState.communicator!
                               .deleteSlotInfo(widget.slot, TagFrequency.hf);
                           await appState.communicator!.setSlotTagName(
@@ -129,7 +194,8 @@ class SlotSettingsState extends State<SlotSettings> {
                           await appState.communicator!.saveSlotData();
 
                           setState(() {
-                            hfName = "";
+                            names.hf = localizations.empty;
+                            slotTypes.hf = TagType.unknown;
                           });
 
                           widget.refresh(widget.slot);
@@ -146,11 +212,53 @@ class SlotSettingsState extends State<SlotSettings> {
                       Expanded(
                           child: OutlinedButton(
                         onPressed: null,
-                        child: Text(lfName),
+                        child: Text(names.lf),
                       )),
                       const SizedBox(width: 8),
+                      Switch(
+                        value: enabledSlot.lf,
+                        onChanged: (bool value) async {
+                          await appState.communicator!
+                              .enableSlot(widget.slot, TagFrequency.lf, value);
+
+                          setState(() {
+                            enabledSlot.lf = value;
+                          });
+
+                          widget.refresh(widget.slot);
+                        },
+                      ),
                       IconButton(
                         onPressed: () async {
+                          showDialog<String>(
+                              context: context,
+                              builder: (BuildContext context) => SlotEditMenu(
+                                  name: names.lf,
+                                  isEnabled: enabledSlot.lf,
+                                  slotType: slotTypes.lf,
+                                  frequency: TagFrequency.lf,
+                                  slot: widget.slot,
+                                  update: updateSlot));
+                        },
+                        icon: const Icon(Icons.edit),
+                      ),
+                      IconButton(
+                        onPressed: () async {
+                          if (appState.sharedPreferencesProvider
+                                  .getConfirmDelete() ==
+                              true) {
+                            var confirm = await showDialog(
+                              context: context,
+                              builder: (BuildContext context) {
+                                return ConfirmDeletionMenu(
+                                    thingBeingDeleted: names.lf);
+                              },
+                            );
+
+                            if (confirm != true) {
+                              return;
+                            }
+                          }
                           await appState.communicator!
                               .deleteSlotInfo(widget.slot, TagFrequency.lf);
                           await appState.communicator!.setSlotTagName(
@@ -160,7 +268,8 @@ class SlotSettingsState extends State<SlotSettings> {
                           await appState.communicator!.saveSlotData();
 
                           setState(() {
-                            lfName = "";
+                            names.lf = localizations.empty;
+                            slotTypes.lf = TagType.unknown;
                           });
 
                           widget.refresh(widget.slot);
@@ -169,140 +278,6 @@ class SlotSettingsState extends State<SlotSettings> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
-                  Text(localizations.slot_status),
-                  const SizedBox(height: 8),
-                  ToggleButtonsWrapper(
-                      items: [localizations.enabled, localizations.disabled],
-                      selectedValue: isEnabled ? 0 : 1,
-                      onChange: (int index) async {
-                        await appState.communicator!
-                            .enableSlot(widget.slot, index == 0 ? true : false);
-
-                        widget.refresh(widget.slot);
-                      }),
-                  const SizedBox(height: 16),
-                  Text(
-                    localizations.mifare_classic_emulator_settings,
-                    textScaleFactor: 1.1,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(localizations.mode_gen1a),
-                  const SizedBox(height: 8),
-                  ToggleButtonsWrapper(
-                      items: [localizations.yes, localizations.no],
-                      selectedValue: isGen1a ? 0 : 1,
-                      onChange: (int index) async {
-                        await appState.communicator!.activateSlot(widget.slot);
-                        await appState.communicator!
-                            .setMf1Gen1aMode(index == 0 ? true : false);
-
-                        widget.refresh(widget.slot);
-                      }),
-                  const SizedBox(height: 8),
-                  Text(localizations.mode_gen2),
-                  const SizedBox(height: 8),
-                  ToggleButtonsWrapper(
-                      items: [localizations.yes, localizations.no],
-                      selectedValue: isGen2 ? 0 : 1,
-                      onChange: (int index) async {
-                        await appState.communicator!.activateSlot(widget.slot);
-                        await appState.communicator!
-                            .setMf1Gen2Mode(index == 0 ? true : false);
-
-                        widget.refresh(widget.slot);
-                      }),
-                  const SizedBox(height: 8),
-                  Text(localizations.use_from_block),
-                  const SizedBox(height: 8),
-                  ToggleButtonsWrapper(
-                      items: [localizations.yes, localizations.no],
-                      selectedValue: isAntiColl ? 0 : 1,
-                      onChange: (int index) async {
-                        await appState.communicator!.activateSlot(widget.slot);
-                        await appState.communicator!
-                            .setMf1UseFirstBlockColl(index == 0 ? true : false);
-
-                        widget.refresh(widget.slot);
-                      }),
-                  const SizedBox(height: 8),
-                  Text(localizations.collect_nonces("Mfkey32")),
-                  const SizedBox(height: 8),
-                  ToggleButtonsWrapper(
-                      items: [localizations.yes, localizations.no],
-                      selectedValue: isDetection ? 0 : 1,
-                      onChange: (int index) async {
-                        await appState.communicator!.activateSlot(widget.slot);
-                        await appState.communicator!.setMf1DetectionStatus(
-                            isDetection = index == 0 ? true : false);
-
-                        widget.refresh(widget.slot);
-                      }),
-                  ...(isDetection)
-                      ? [
-                          ...(detectionCount == 0)
-                              ? [
-                                  const SizedBox(height: 8),
-                                  Text(localizations.present_cham_reader_keys,
-                                      textScaleFactor: 0.8)
-                                ]
-                              : [
-                                  const SizedBox(height: 8),
-                                  Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        TextButton(
-                                            onPressed: () {
-                                              Navigator.pop(context);
-                                              appState.forceMfkey32Page = true;
-                                              appState.changesMade();
-                                            },
-                                            child: Row(
-                                              children: [
-                                                const Icon(Icons.lock_open),
-                                                Text(
-                                                    localizations.recover_keys),
-                                              ],
-                                            )),
-                                      ]),
-                                ],
-                        ]
-                      : [
-                          const SizedBox(height: 8),
-                          Text(localizations.ena_coll_recover_keys,
-                              textScaleFactor: 0.8)
-                        ],
-                  const SizedBox(height: 8),
-                  Text(localizations.write_mode),
-                  const SizedBox(height: 8),
-                  ToggleButtonsWrapper(
-                      items: [
-                        localizations.normal,
-                        localizations.decline,
-                        localizations.deceive,
-                        localizations.shadow
-                      ],
-                      selectedValue: writeMode.value,
-                      onChange: (int index) async {
-                        await appState.communicator!.activateSlot(widget.slot);
-
-                        if (index == 0) {
-                          await appState.communicator!
-                              .setMf1WriteMode(MifareClassicWriteMode.normal);
-                        } else if (index == 1) {
-                          await appState.communicator!
-                              .setMf1WriteMode(MifareClassicWriteMode.denied);
-                        } else if (index == 2) {
-                          await appState.communicator!
-                              .setMf1WriteMode(MifareClassicWriteMode.deceive);
-                        } else if (index == 3) {
-                          await appState.communicator!
-                              .setMf1WriteMode(MifareClassicWriteMode.shadow);
-                        }
-
-                        widget.refresh(widget.slot);
-                      }),
                 ])));
           }
         });

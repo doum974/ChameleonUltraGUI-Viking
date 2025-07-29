@@ -5,9 +5,11 @@
 *.swp
 .DS_Store
 .atom/
+.build/
 .buildlog/
 .history
 .svn/
+.swiftpm/
 migrate_working_dir/
 
 # IntelliJ related
@@ -53,3 +55,7 @@ android/fastlane/report.xml
 **/upload-keystore.jks
 **/AuthKey*.p8
 **/cert_key
+
+# Translation
+untranslated_messages.json
+lib/generated/i18n/

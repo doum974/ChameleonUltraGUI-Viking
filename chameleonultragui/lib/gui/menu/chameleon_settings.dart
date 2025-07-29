@@ -4,11 +4,12 @@ import 'package:chameleonultragui/gui/component/toggle_buttons.dart';
 import 'package:chameleonultragui/helpers/flash.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:chameleonultragui/main.dart';
 
 // Localizations
-import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 
 class ChameleonSettings extends StatefulWidget {
   const ChameleonSettings({super.key});
@@ -18,71 +19,20 @@ class ChameleonSettings extends StatefulWidget {
 }
 
 class ChameleonSettingsState extends State<ChameleonSettings> {
-  late AnimationSetting animationMode;
-
   @override
   void initState() {
     super.initState();
   }
 
-  Future<AnimationSetting> getAnimationMode() async {
+  Future<DeviceSettings> getSettingsData() async {
     var appState = context.read<ChameleonGUIState>();
-
     try {
-      return await appState.communicator!.getAnimationMode();
+      return await appState.communicator!.getDeviceSettings();
     } catch (_) {
-      return AnimationSetting.full;
+      return DeviceSettings();
     }
   }
 
-  Future<ButtonConfig> getButtonConfig(ButtonType type) async {
-    var appState = context.read<ChameleonGUIState>();
-    try {
-      return await appState.communicator!.getButtonConfig(type);
-    } catch (_) {
-      return ButtonConfig.disable;
-    }
-  }
-
-  Future<ButtonConfig> getLongButtonConfig(ButtonType type) async {
-    var appState = context.read<ChameleonGUIState>();
-    try {
-      return await appState.communicator!.getLongButtonConfig(type);
-    } catch (_) {
-      return ButtonConfig.disable;
-    }
-  }
-
-  Future<String> getBLEConnectionKey() async {
-    var appState = context.read<ChameleonGUIState>();
-
-    try {
-      return await appState.communicator!.getBLEConnectionKey();
-    } catch (_) {
-      return "123456";
-    }
-  }
-
-  Future<
-      (
-        AnimationSetting,
-        ButtonConfig,
-        ButtonConfig,
-        ButtonConfig,
-        ButtonConfig,
-        String
-      )> getSettingsData() async {
-    return (
-      await getAnimationMode(),
-      await getButtonConfig(ButtonType.a),
-      await getButtonConfig(ButtonType.b),
-      await getLongButtonConfig(ButtonType.a),
-      await getLongButtonConfig(ButtonType.b),
-      await getBLEConnectionKey()
-    );
-  }
-
-  // ignore_for_file: use_build_context_synchronously
   @override
   Widget build(BuildContext context) {
     var appState = context.watch<ChameleonGUIState>();
@@ -103,16 +53,9 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                 content: Text(
                     '${localizations.error}: ${snapshot.error.toString()}'));
           } else {
-            var (
-              animationMode,
-              aButtonMode,
-              bButtonMode,
-              aLongButtonMode,
-              bLongButtonMode,
-              connectionKey
-            ) = snapshot.data;
+            DeviceSettings settings = snapshot.data;
             TextEditingController bleKeyController =
-                TextEditingController(text: connectionKey);
+                TextEditingController(text: settings.key);
             return AlertDialog(
                 title: Text(localizations.device_settings),
                 content: SingleChildScrollView(
@@ -123,11 +66,13 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                     FittedBox(
                         alignment: Alignment.centerRight,
                         fit: BoxFit.scaleDown,
-                        child: TextButton(
+                        child: ElevatedButton(
                             onPressed: () async {
                               await appState.communicator!.enterDFUMode();
                               appState.connector!.performDisconnect();
-                              Navigator.pop(buildContext, localizations.cancel);
+                              if (buildContext.mounted) {
+                                Navigator.pop(buildContext);
+                              }
                               appState.changesMade();
                             },
                             child: Row(
@@ -136,12 +81,13 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                                 Text(localizations.enter_dfu),
                               ],
                             ))),
+                    const SizedBox(height: 10),
                     FittedBox(
                         alignment: Alignment.centerRight,
                         fit: BoxFit.scaleDown,
-                        child: TextButton(
+                        child: ElevatedButton(
                             onPressed: () async {
-                              Navigator.pop(buildContext, localizations.cancel);
+                              Navigator.pop(buildContext);
                               var snackBar = SnackBar(
                                 content: Text(localizations.downloading_fw(
                                     chameleonDeviceName(
@@ -176,14 +122,28 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                                 Text(localizations.flash_via_dfu),
                               ],
                             ))),
+                    const SizedBox(height: 10),
                     FittedBox(
                         alignment: Alignment.centerRight,
                         fit: BoxFit.scaleDown,
-                        child: TextButton(
+                        child: ElevatedButton(
                             onPressed: () async {
-                              Navigator.pop(buildContext, localizations.cancel);
-                              await flashFirmwareZip(appState,
-                                  scaffoldMessenger: scaffoldMessenger);
+                              Navigator.pop(buildContext);
+                              try {
+                                await flashFirmwareZip(appState,
+                                    scaffoldMessenger: scaffoldMessenger);
+                              } catch (e) {
+                                scaffoldMessenger.hideCurrentSnackBar();
+                                var snackBar = SnackBar(
+                                  content: Text(
+                                      '${localizations.update_error}: ${e.toString()}'),
+                                  action: SnackBarAction(
+                                    label: localizations.close,
+                                    onPressed: () {},
+                                  ),
+                                );
+                                scaffoldMessenger.showSnackBar(snackBar);
+                              }
                             },
                             child: Row(
                               children: [
@@ -200,7 +160,7 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                           localizations.mini,
                           localizations.none
                         ],
-                        selectedValue: animationMode.value,
+                        selectedValue: settings.animation.value,
                         onChange: (int index) async {
                           var animation = AnimationSetting.full;
                           if (index == 1) {
@@ -219,16 +179,17 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                     Text("${localizations.button_config}:"),
                     const SizedBox(height: 7),
                     Text("${localizations.button_x("A")}:",
-                        textScaleFactor: 0.8),
+                        textScaler: const TextScaler.linear(0.8)),
                     const SizedBox(height: 7),
                     ToggleButtonsWrapper(
                         items: [
                           localizations.disable,
                           localizations.forward,
                           localizations.backward,
-                          localizations.clone_uid
+                          localizations.clone_uid,
+                          localizations.charge
                         ],
-                        selectedValue: aButtonMode.value,
+                        selectedValue: settings.aPress.value,
                         onChange: (int index) async {
                           var mode = ButtonConfig.disable;
                           if (index == 1) {
@@ -237,6 +198,8 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                             mode = ButtonConfig.cycleBackward;
                           } else if (index == 3) {
                             mode = ButtonConfig.cloneUID;
+                          } else if (index == 4) {
+                            mode = ButtonConfig.chargeStatus;
                           }
 
                           await appState.communicator!
@@ -247,16 +210,17 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                         }),
                     const SizedBox(height: 7),
                     Text("${localizations.button_x("B")}:",
-                        textScaleFactor: 0.8),
+                        textScaler: const TextScaler.linear(0.8)),
                     const SizedBox(height: 7),
                     ToggleButtonsWrapper(
                         items: [
                           localizations.disable,
                           localizations.forward,
                           localizations.backward,
-                          localizations.clone_uid
+                          localizations.clone_uid,
+                          localizations.charge
                         ],
-                        selectedValue: bButtonMode.value,
+                        selectedValue: settings.bPress.value,
                         onChange: (int index) async {
                           var mode = ButtonConfig.disable;
                           if (index == 1) {
@@ -265,6 +229,8 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                             mode = ButtonConfig.cycleBackward;
                           } else if (index == 3) {
                             mode = ButtonConfig.cloneUID;
+                          } else if (index == 4) {
+                            mode = ButtonConfig.chargeStatus;
                           }
 
                           await appState.communicator!
@@ -274,19 +240,21 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                           appState.changesMade();
                         }),
                     const SizedBox(height: 7),
-                    Text(localizations.long_press, textScaleFactor: 0.9),
+                    Text(localizations.long_press,
+                        textScaler: const TextScaler.linear(0.9)),
                     const SizedBox(height: 7),
                     Text("${localizations.button_x("A")}:",
-                        textScaleFactor: 0.8),
+                        textScaler: const TextScaler.linear(0.8)),
                     const SizedBox(height: 7),
                     ToggleButtonsWrapper(
                         items: [
                           localizations.disable,
                           localizations.forward,
                           localizations.backward,
-                          localizations.clone_uid
+                          localizations.clone_uid,
+                          localizations.charge
                         ],
-                        selectedValue: aLongButtonMode.value,
+                        selectedValue: settings.aLongPress.value,
                         onChange: (int index) async {
                           var mode = ButtonConfig.disable;
                           if (index == 1) {
@@ -295,6 +263,8 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                             mode = ButtonConfig.cycleBackward;
                           } else if (index == 3) {
                             mode = ButtonConfig.cloneUID;
+                          } else if (index == 4) {
+                            mode = ButtonConfig.chargeStatus;
                           }
 
                           await appState.communicator!
@@ -305,16 +275,17 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                         }),
                     const SizedBox(height: 7),
                     Text("${localizations.button_x("B")}:",
-                        textScaleFactor: 0.8),
+                        textScaler: const TextScaler.linear(0.8)),
                     const SizedBox(height: 7),
                     ToggleButtonsWrapper(
                         items: [
                           localizations.disable,
                           localizations.forward,
                           localizations.backward,
-                          localizations.clone_uid
+                          localizations.clone_uid,
+                          localizations.charge
                         ],
-                        selectedValue: bLongButtonMode.value,
+                        selectedValue: settings.bLongPress.value,
                         onChange: (int index) async {
                           var mode = ButtonConfig.disable;
                           if (index == 1) {
@@ -323,6 +294,8 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                             mode = ButtonConfig.cycleBackward;
                           } else if (index == 3) {
                             mode = ButtonConfig.cloneUID;
+                          } else if (index == 4) {
+                            mode = ButtonConfig.chargeStatus;
                           }
 
                           await appState.communicator!
@@ -334,102 +307,149 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                     const SizedBox(height: 10),
                     const Text("BLE:"),
                     const SizedBox(height: 10),
-                    FittedBox(
-                        alignment: Alignment.centerRight,
-                        fit: BoxFit.scaleDown,
-                        child: TextButton(
-                            onPressed: () async {
-                              showDialog(
-                                context: context,
-                                builder: (BuildContext context) => AlertDialog(
-                                  title: Text(localizations.clear_ble_bonds),
-                                  content: Text(localizations
-                                      .clear_ble_bonds_confirmation),
-                                  actions: <Widget>[
-                                    TextButton(
-                                      onPressed: () async {
-                                        await appState.communicator!
-                                            .clearBLEBoundedDevices();
-                                        if (appState
-                                                .connector!.connectionType ==
-                                            ConnectionType.ble) {
-                                          await appState.connector!
-                                              .performDisconnect();
-                                        }
-                                        Navigator.pop(
-                                            context, localizations.cancel);
-                                        appState.changesMade();
-                                      },
-                                      child: Text(localizations.yes),
+                    Text('${localizations.ble_pairing}:'),
+                    const SizedBox(height: 10),
+                    ToggleButtonsWrapper(
+                        items: [
+                          localizations.enabled,
+                          localizations.disabled,
+                        ],
+                        selectedValue: settings.pairingEnabled ? 0 : 1,
+                        onChange: (int index) async {
+                          await appState.communicator!
+                              .setBLEPairEnabled(index == 0);
+                          await appState.communicator!.saveSettings();
+                          setState(() {});
+                          appState.changesMade();
+                        }),
+                    ...(settings.pairingEnabled)
+                        ? [
+                            const SizedBox(height: 10),
+                            FittedBox(
+                                alignment: Alignment.centerRight,
+                                fit: BoxFit.scaleDown,
+                                child: ElevatedButton(
+                                    onPressed: () async {
+                                      showDialog(
+                                        context: context,
+                                        builder: (BuildContext context) =>
+                                            AlertDialog(
+                                          title: Text(
+                                              localizations.clear_ble_bonds),
+                                          content: Text(localizations
+                                              .clear_ble_bonds_confirmation),
+                                          actions: <Widget>[
+                                            TextButton(
+                                              onPressed: () async {
+                                                await appState.communicator!
+                                                    .clearBLEBoundedDevices();
+                                                if (appState.connector!
+                                                        .connectionType ==
+                                                    ConnectionType.ble) {
+                                                  await appState.connector!
+                                                      .performDisconnect();
+                                                }
+
+                                                if (context.mounted) {
+                                                  Navigator.pop(context);
+                                                }
+
+                                                appState.changesMade();
+                                              },
+                                              child: Text(localizations.yes),
+                                            ),
+                                            TextButton(
+                                              onPressed: () {
+                                                if (context.mounted) {
+                                                  Navigator.pop(context);
+                                                }
+                                              },
+                                              child: Text(localizations.no),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.settings_bluetooth),
+                                        Text(localizations.clear_ble_bonds),
+                                      ],
+                                    ))),
+                            Form(
+                                key: formKey,
+                                autovalidateMode:
+                                    AutovalidateMode.onUserInteraction,
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: TextFormField(
+                                          controller: bleKeyController,
+                                          maxLength: 6,
+                                          validator: (value) {
+                                            if (value == null ||
+                                                value.isEmpty ||
+                                                value.length != 6 ||
+                                                double.tryParse(value) ==
+                                                    null) {
+                                              return localizations
+                                                  .pin_must_be_6_digits;
+                                            }
+
+                                            if (0 < double.tryParse(value)! &&
+                                                double.tryParse(value)! >
+                                                    0xFFFFFFFF) {
+                                              return localizations
+                                                  .pin_must_be_6_digits;
+                                            }
+
+                                            return null;
+                                          },
+                                          inputFormatters: [
+                                            FilteringTextInputFormatter.allow(
+                                                RegExp(r'[0-9]'))
+                                          ],
+                                          decoration: InputDecoration(
+                                            labelText: localizations.ble_pin,
+                                            hintText: localizations.enter_pin,
+                                          )),
                                     ),
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(
-                                          context, localizations.cancel),
-                                      child: Text(localizations.no),
+                                    ElevatedButton(
+                                      onPressed: () async {
+                                        if (formKey.currentState!.validate()) {
+                                          await appState.communicator!
+                                              .setBLEConnectKey(
+                                                  bleKeyController.text);
+                                          await appState.communicator!
+                                              .saveSettings();
+
+                                          if (context.mounted) {
+                                            Navigator.pop(context);
+                                          }
+
+                                          appState.changesMade();
+                                        }
+                                      },
+                                      child: Text(localizations.save),
                                     ),
                                   ],
-                                ),
-                              );
-                            },
-                            child: Row(
-                              children: [
-                                const Icon(Icons.settings_bluetooth),
-                                Text(localizations.clear_ble_bonds),
-                              ],
-                            ))),
-                    Form(
-                        key: formKey,
-                        autovalidateMode: AutovalidateMode.onUserInteraction,
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                  controller: bleKeyController,
-                                  maxLength: 6,
-                                  validator: (value) {
-                                    if (value == null ||
-                                        value.isEmpty ||
-                                        value.length != 6 ||
-                                        double.tryParse(value) == null) {
-                                      return localizations.pin_must_be_6_digits;
-                                    }
-
-                                    if (0 < double.tryParse(value)! &&
-                                        double.tryParse(value)! > 0xFFFFFFFF) {
-                                      return localizations.pin_must_be_6_digits;
-                                    }
-
-                                    return null;
-                                  },
-                                  decoration: InputDecoration(
-                                    labelText: localizations.ble_pin,
-                                    hintText: localizations.enter_pin,
-                                  )),
-                            ),
-                            TextButton(
-                              onPressed: () async {
-                                if (formKey.currentState!.validate()) {
-                                  await appState.communicator!
-                                      .setBLEConnectKey(bleKeyController.text);
-                                  await appState.communicator!.saveSettings();
-                                  Navigator.pop(context, localizations.cancel);
-                                  appState.changesMade();
-                                }
-                              },
-                              child: Text(localizations.save),
-                            ),
-                          ],
-                        )),
+                                )),
+                          ]
+                        : [],
                     const SizedBox(height: 10),
                     Text("${localizations.other}:"),
                     const SizedBox(height: 10),
                     FittedBox(
                         alignment: Alignment.centerRight,
                         fit: BoxFit.scaleDown,
-                        child: TextButton(
+                        child: ElevatedButton(
                             onPressed: () async {
                               await appState.communicator!.resetSettings();
-                              Navigator.pop(context, localizations.cancel);
+
+                              if (context.mounted) {
+                                Navigator.pop(context);
+                              }
+
                               appState.changesMade();
                             },
                             child: Row(
@@ -438,13 +458,14 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                                 Text(localizations.reset_settings),
                               ],
                             ))),
+                    const SizedBox(height: 10),
                     FittedBox(
                         alignment: Alignment.centerRight,
                         fit: BoxFit.scaleDown,
-                        child: TextButton(
+                        child: ElevatedButton(
                             onPressed: () async {
                               // Ask for confirmation
-                              Navigator.pop(context, localizations.cancel);
+                              Navigator.pop(context);
                               showDialog(
                                 context: context,
                                 builder: (BuildContext context) => AlertDialog(
@@ -458,8 +479,11 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                                             .factoryReset();
                                         await appState.connector!
                                             .performDisconnect();
-                                        Navigator.pop(
-                                            context, localizations.cancel);
+
+                                        if (context.mounted) {
+                                          Navigator.pop(context);
+                                        }
+
                                         appState.changesMade();
                                       },
                                       child: Text(localizations.yes),

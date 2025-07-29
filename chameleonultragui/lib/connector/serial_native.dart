@@ -13,6 +13,10 @@ class NativeSerial extends AbstractSerial {
   NativeSerial({required super.log});
 
   @override
+  bool isManualConnectionSupported() {
+    return true;
+  }
+
   Future<List> availableDevices() async {
     return SerialPort.availablePorts;
   }
@@ -35,14 +39,15 @@ class NativeSerial extends AbstractSerial {
     connectionType = ConnectionType.none;
     isOpen = false;
     messageCallback = null;
+    connected = false;
+    messageCallback = null;
     if (port != null) {
-      port?.close();
       reader?.close();
+      port?.close();
       reader = null;
-      connected = false;
+      port = null;
       return true;
     }
-    connected = false; // For debug button
     return false;
   }
 
@@ -125,7 +130,8 @@ class NativeSerial extends AbstractSerial {
       }
 
       return false;
-    } on SerialPortError {
+    } on SerialPortError catch (e) {
+      log.e(e);
       return false;
     }
   }

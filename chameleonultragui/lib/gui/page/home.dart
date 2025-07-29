@@ -8,83 +8,86 @@ import 'package:chameleonultragui/bridge/chameleon.dart';
 import 'package:chameleonultragui/connector/serial_abstract.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:chameleonultragui/gui/component/slot_changer.dart';
+import 'dart:math';
 
 // Localizations
-import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({Key? key}) : super(key: key);
+  const HomePage({super.key});
 
   @override
   HomePageState createState() => HomePageState();
 }
 
 class HomePageState extends State<HomePage> {
-  var selectedSlot = 1;
+  int selectedSlot = 1;
+  bool isLegacyFirmware = false;
 
   @override
   void initState() {
     super.initState();
   }
 
-  Future<(Icon, String, List<String>, bool)> getFutureData() async {
+  Future<((Icon, BatteryCharge), String, List<String>, bool)>
+      getFutureData() async {
     var appState = context.read<ChameleonGUIState>();
-    List<(TagType, TagType)> usedSlots = [];
+    List<SlotTypes> slotTypes = [];
     try {
-      usedSlots = await appState.communicator!.getUsedSlots();
+      slotTypes = await appState.communicator!.getSlotTagTypes();
     } catch (e) {
       appState.log!.e(e);
     }
 
     return (
-      await getBatteryChargeIcon(),
-      await getUsedSlotsOut8(usedSlots),
+      await getBatteryInfo(),
+      await getUsedSlotsOut8(slotTypes),
       await getVersion(),
       await isReaderDeviceMode()
     );
   }
 
-  Future<Icon> getBatteryChargeIcon() async {
+  Future<(Icon, BatteryCharge)> getBatteryInfo() async {
     var appState = context.read<ChameleonGUIState>();
-    int charge = 0;
+    var icon = const Icon(Icons.battery_unknown);
+    BatteryCharge battery = BatteryCharge(percent: 0, voltage: 0);
 
     try {
-      (_, charge) = await appState.communicator!.getBatteryCharge();
+      battery = await appState.communicator!.getBatteryCharge();
     } catch (_) {}
 
-    if (charge > 98) {
-      return const Icon(Icons.battery_full);
-    } else if (charge > 87) {
-      return const Icon(Icons.battery_6_bar);
-    } else if (charge > 75) {
-      return const Icon(Icons.battery_5_bar);
-    } else if (charge > 62) {
-      return const Icon(Icons.battery_4_bar);
-    } else if (charge > 50) {
-      return const Icon(Icons.battery_3_bar);
-    } else if (charge > 37) {
-      return const Icon(Icons.battery_2_bar);
-    } else if (charge > 10) {
-      return const Icon(Icons.battery_1_bar);
-    } else if (charge > 3) {
-      return const Icon(Icons.battery_0_bar);
-    } else if (charge > 0) {
-      return const Icon(Icons.battery_alert);
+    if (battery.percent > 98) {
+      icon = const Icon(Icons.battery_full);
+    } else if (battery.percent > 87) {
+      icon = const Icon(Icons.battery_6_bar);
+    } else if (battery.percent > 75) {
+      icon = const Icon(Icons.battery_5_bar);
+    } else if (battery.percent > 62) {
+      icon = const Icon(Icons.battery_4_bar);
+    } else if (battery.percent > 50) {
+      icon = const Icon(Icons.battery_3_bar);
+    } else if (battery.percent > 37) {
+      icon = const Icon(Icons.battery_2_bar);
+    } else if (battery.percent > 10) {
+      icon = const Icon(Icons.battery_1_bar);
+    } else if (battery.percent > 3) {
+      icon = const Icon(Icons.battery_0_bar);
+    } else if (battery.percent > 0) {
+      icon = const Icon(Icons.battery_alert);
     }
 
-    return const Icon(Icons.battery_unknown);
+    return (icon, battery);
   }
 
-  Future<String> getUsedSlotsOut8(List<(TagType, TagType)> usedSlots) async {
+  Future<String> getUsedSlotsOut8(List<SlotTypes> slotTypes) async {
     int usedSlotsOut8 = 0;
 
-    if (usedSlots.isEmpty) {
+    if (slotTypes.isEmpty) {
       return AppLocalizations.of(context)!.unknown;
     }
 
     for (int i = 0; i < 8; i++) {
-      if (usedSlots[i].$1 != TagType.unknown ||
-          usedSlots[i].$2 != TagType.unknown) {
+      if (slotTypes[i].notMatch()) {
         usedSlotsOut8++;
       }
     }
@@ -93,20 +96,78 @@ class HomePageState extends State<HomePage> {
 
   Future<List<String>> getVersion() async {
     var appState = context.read<ChameleonGUIState>();
+
+    if (appState.connector!.portName == "Demo") {
+      return [AppLocalizations.of(context)!.demo_firmware, "Demo"];
+    }
+
     String commitHash = "";
-    String firmwareVersion =
-        numToVerCode(await appState.communicator!.getFirmwareVersion());
+    var firmware = await appState.communicator!.getFirmwareVersion();
+    isLegacyFirmware = firmware.legacyProtocol;
+    String firmwareVersion = numToVerCode(firmware.version);
 
     try {
       commitHash = await appState.communicator!.getGitCommitHash();
     } catch (_) {}
 
     if (commitHash.isEmpty) {
-      if (context.mounted) {
+      if (mounted) {
         commitHash = AppLocalizations.of(context)!.outdated_fw;
       } else {
         commitHash = "Outdated FW";
       }
+    }
+
+    if (mounted && isLegacyFirmware) {
+      var localizations = AppLocalizations.of(context)!;
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: Text(localizations.outdated_protocol),
+            content: SingleChildScrollView(
+              child: ListBody(
+                children: <Widget>[
+                  Text(localizations.outdated_protocol_description_1),
+                  Text(localizations.outdated_protocol_description_2),
+                  Text(localizations.outdated_protocol_description_3),
+                ],
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                child: Text(localizations.update),
+                onPressed: () async {
+                  Navigator.of(context).pop();
+                  var localizations = AppLocalizations.of(context)!;
+                  var scaffoldMessenger = ScaffoldMessenger.of(context);
+                  var snackBar = SnackBar(
+                    content: Text(localizations.downloading_fw(
+                        chameleonDeviceName(appState.connector!.device))),
+                    action: SnackBarAction(
+                      label: localizations.close,
+                      onPressed: () {
+                        scaffoldMessenger.hideCurrentSnackBar();
+                      },
+                    ),
+                  );
+
+                  scaffoldMessenger.showSnackBar(snackBar);
+                  await flashFirmware(appState,
+                      scaffoldMessenger: scaffoldMessenger);
+                },
+              ),
+              TextButton(
+                child: Text(localizations.skip),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+              ),
+            ],
+          );
+        },
+      );
     }
 
     return ["$firmwareVersion ($commitHash)", commitHash];
@@ -137,7 +198,7 @@ class HomePageState extends State<HomePage> {
             return Text('${localizations.error}: ${snapshot.error.toString()}');
           } else {
             final (
-              batteryIcon,
+              batteryInfo,
               usedSlots,
               fwVersion,
               isReaderDeviceMode,
@@ -174,13 +235,29 @@ class HomePageState extends State<HomePage> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.end,
                               children: [
-                                Text(appState.connector!.portName,
-                                    style: const TextStyle(fontSize: 20)),
+                                Expanded(
+                                    flex: 1,
+                                    child: FittedBox(
+                                        alignment: Alignment.centerRight,
+                                        fit: BoxFit.scaleDown,
+                                        child: Row(children: [
+                                          Text(
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              appState.connector!.portName,
+                                              style:
+                                                  const TextStyle(fontSize: 20))
+                                        ]))),
                                 Icon(appState.connector!.connectionType ==
                                         ConnectionType.ble
                                     ? Icons.bluetooth
                                     : Icons.usb),
-                                batteryIcon,
+                                Tooltip(
+                                  message: localizations.battery_info(
+                                      batteryInfo.$2.percent,
+                                      batteryInfo.$2.voltage),
+                                  child: batteryInfo.$1,
+                                ),
                               ],
                             ),
                           ],
@@ -193,16 +270,26 @@ class HomePageState extends State<HomePage> {
                         Text(
                             "Chameleon ${chameleonDeviceName(appState.connector!.device)}",
                             style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize:
-                                    MediaQuery.of(context).size.width / 25)),
+                              fontWeight: FontWeight.bold,
+                              fontSize: min(
+                                MediaQuery.of(context).size.width / 25,
+                                MediaQuery.of(context).size.height / 20,
+                              ),
+                            )),
                       ],
                     ),
                     const SizedBox(height: 20),
                     Text("${localizations.used_slots}: $usedSlots/8",
                         style: TextStyle(
-                            fontSize: MediaQuery.of(context).size.width / 50)),
-                    const SlotChanger(),
+                          fontSize: min(
+                            MediaQuery.of(context).size.width / 35,
+                            MediaQuery.of(context).size.height / 20,
+                          ),
+                        )),
+                    const FittedBox(
+                        alignment: Alignment.center,
+                        fit: BoxFit.scaleDown,
+                        child: SlotChanger()),
                     Expanded(
                       child: FractionallySizedBox(
                         widthFactor: 0.4,
@@ -220,13 +307,19 @@ class HomePageState extends State<HomePage> {
                       children: [
                         Text("${localizations.firmware_version}: ",
                             style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize:
-                                    MediaQuery.of(context).size.width / 50)),
+                              fontWeight: FontWeight.bold,
+                              fontSize: min(
+                                MediaQuery.of(context).size.width / 50,
+                                MediaQuery.of(context).size.height / 30,
+                              ),
+                            )),
                         Text(fwVersion[0],
                             style: TextStyle(
-                                fontSize:
-                                    MediaQuery.of(context).size.width / 50)),
+                              fontSize: min(
+                                MediaQuery.of(context).size.width / 50,
+                                MediaQuery.of(context).size.height / 30,
+                              ),
+                            )),
                         Padding(
                           padding: const EdgeInsets.all(4.0),
                           child: IconButton(
@@ -254,7 +347,13 @@ class HomePageState extends State<HomePage> {
                                 return;
                               }
 
-                              appState.log!.i("Latest commit: $latestCommit");
+                              try {
+                                fwVersion[1] =
+                                    await resolveCommit(fwVersion[1]);
+                              } catch (_) {}
+
+                              appState.log!.i(
+                                  "Latest commit: $latestCommit, current commit ${fwVersion[1]}");
 
                               if (latestCommit.isEmpty) {
                                 return;

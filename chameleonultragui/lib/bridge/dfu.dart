@@ -149,7 +149,7 @@ class DFUCommunicator {
   }
 
   Future<Uint8List?> sendCmd(DFUCommand cmd, Uint8List data) async {
-    var packet = Uint8List.fromList([cmd.value, ...data.toList()]);
+    var packet = Uint8List.fromList([cmd.value, ...data]);
     if (!isBLE) {
       packet = Slip.encode(packet);
     }
@@ -232,6 +232,10 @@ class DFUCommunicator {
               (await sendCmd(DFUCommand.getSerialMTU, Uint8List(0)))!.buffer)
           .getUint16(0, Endian.little);
     } catch (_) {
+      mtu = 2051;
+    }
+
+    if (mtu == 0) {
       mtu = 2051;
     }
 

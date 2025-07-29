@@ -30,7 +30,7 @@ class Recovery {
 
   ffi.Pointer<ffi.Uint64> darkside(
     ffi.Pointer<Darkside> data,
-    ffi.Pointer<ffi.Uint32> keyCount,
+    ffi.Pointer<ffi.Uint64> keyCount,
   ) {
     return _darkside(
       data,
@@ -41,10 +41,10 @@ class Recovery {
   late final _darksidePtr = _lookup<
       ffi.NativeFunction<
           ffi.Pointer<ffi.Uint64> Function(
-              ffi.Pointer<Darkside>, ffi.Pointer<ffi.Uint32>)>>('darkside');
+              ffi.Pointer<Darkside>, ffi.Pointer<ffi.Uint64>)>>('darkside');
   late final _darkside = _darksidePtr.asFunction<
       ffi.Pointer<ffi.Uint64> Function(
-          ffi.Pointer<Darkside>, ffi.Pointer<ffi.Uint32>)>();
+          ffi.Pointer<Darkside>, ffi.Pointer<ffi.Uint64>)>();
 
   ffi.Pointer<ffi.Uint64> nested(
     ffi.Pointer<Nested> data,
@@ -64,6 +64,24 @@ class Recovery {
       ffi.Pointer<ffi.Uint64> Function(
           ffi.Pointer<Nested>, ffi.Pointer<ffi.Uint32>)>();
 
+  ffi.Pointer<ffi.Uint64> static_nested(
+    ffi.Pointer<StaticNested> data,
+    ffi.Pointer<ffi.Uint32> keyCount,
+  ) {
+    return _static_nested(
+      data,
+      keyCount,
+    );
+  }
+
+  late final _static_nestedPtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Pointer<ffi.Uint64> Function(ffi.Pointer<StaticNested>,
+              ffi.Pointer<ffi.Uint32>)>>('static_nested');
+  late final _static_nested = _static_nestedPtr.asFunction<
+      ffi.Pointer<ffi.Uint64> Function(
+          ffi.Pointer<StaticNested>, ffi.Pointer<ffi.Uint32>)>();
+
   int mfkey32(
     ffi.Pointer<Mfkey32> data,
   ) {
@@ -77,6 +95,20 @@ class Recovery {
           'mfkey32');
   late final _mfkey32 =
       _mfkey32Ptr.asFunction<int Function(ffi.Pointer<Mfkey32>)>();
+
+  int hardnested(
+    ffi.Pointer<HardNested> data,
+  ) {
+    return _hardnested(
+      data,
+    );
+  }
+
+  late final _hardnestedPtr =
+      _lookup<ffi.NativeFunction<ffi.Uint64 Function(ffi.Pointer<HardNested>)>>(
+          'hardnested');
+  late final _hardnested =
+      _hardnestedPtr.asFunction<int Function(ffi.Pointer<HardNested>)>();
 }
 
 final class DarksideItem extends ffi.Struct {
@@ -132,6 +164,26 @@ final class Nested extends ffi.Struct {
   external int par1;
 }
 
+final class StaticNested extends ffi.Struct {
+  @ffi.Uint32()
+  external int uid;
+
+  @ffi.Uint32()
+  external int key_type;
+
+  @ffi.Uint32()
+  external int nt0;
+
+  @ffi.Uint32()
+  external int nt0_enc;
+
+  @ffi.Uint32()
+  external int nt1;
+
+  @ffi.Uint32()
+  external int nt1_enc;
+}
+
 final class Mfkey32 extends ffi.Struct {
   /// serial number
   @ffi.Uint32()
@@ -160,4 +212,11 @@ final class Mfkey32 extends ffi.Struct {
   /// second encrypted reader response
   @ffi.Uint32()
   external int ar1_enc;
+}
+
+final class HardNested extends ffi.Struct {
+  external ffi.Pointer<ffi.Char> nonces;
+
+  @ffi.Uint32()
+  external int length;
 }

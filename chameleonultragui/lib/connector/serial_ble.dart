@@ -28,7 +28,6 @@ class BLESerial extends AbstractSerial {
 
   BLESerial({required super.log});
 
-  @override
   Future<List> availableDevices() async {
     if (inSearch) {
       log.w("Multiple searches in one time not allowed! FIXME");
@@ -75,6 +74,11 @@ class BLESerial extends AbstractSerial {
     });
 
     return completer.future;
+  }
+
+  @override
+  bool isManualConnectionSupported() {
+    return false;
   }
 
   @override
@@ -218,7 +222,18 @@ class BLESerial extends AbstractSerial {
           try {
             await flutterReactiveBle.writeCharacteristicWithResponse(
                 rxCharacteristic!,
-                value: Uint8List(0));
+                value: Uint8List.fromList([
+                  0x11,
+                  0xef,
+                  0x03,
+                  0xfb,
+                  0x00,
+                  0x00,
+                  0x00,
+                  0x00,
+                  0x02,
+                  0x00
+                ]));
 
             connected = true;
             portName = devicePort;

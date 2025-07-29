@@ -1,17 +1,20 @@
 import 'dart:typed_data';
 
 import 'package:chameleonultragui/bridge/chameleon.dart';
+import 'package:chameleonultragui/gui/component/card_list.dart';
 import 'package:chameleonultragui/gui/menu/slot_settings.dart';
 import 'package:chameleonultragui/helpers/general.dart';
-import 'package:chameleonultragui/helpers/mifare_classic.dart';
+import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
+import 'package:chameleonultragui/helpers/mifare_ultralight/general.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:chameleonultragui/sharedprefsprovider.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:provider/provider.dart';
 
 // Localizations
-import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 
 class SlotManagerPage extends StatefulWidget {
   const SlotManagerPage({super.key});
@@ -21,34 +24,33 @@ class SlotManagerPage extends StatefulWidget {
 }
 
 class SlotManagerPageState extends State<SlotManagerPage> {
-  List<(TagType, TagType)> usedSlots = List.generate(
+  List<SlotTypes> usedSlots = List.generate(
     8,
-    (_) => (TagType.unknown, TagType.unknown),
+    (_) => SlotTypes(),
   );
 
-  List<bool> enabledSlots = List.generate(
+  List<EnabledSlotInfo> enabledSlots = List.generate(
     8,
-    (_) => true,
+    (_) => EnabledSlotInfo(),
   );
 
-  List<Map<String, String>> slotData = List.generate(
+  List<SlotNames> slotData = List.generate(
     8,
-    (_) => {
-      'hfName': '...',
-      'lfName': '...',
-    },
+    (_) => SlotNames(),
   );
 
-  int currentFunctionIndex = 0;
+  int index = 0;
   int progress = -1;
+  int gridPosition = 0;
   bool onlyOneSlot = false;
 
   Future<void> executeNextFunction() async {
     var appState = context.read<ChameleonGUIState>();
     var localizations = AppLocalizations.of(context)!;
-    if (currentFunctionIndex == 0 || onlyOneSlot) {
+
+    if (index == 0 || onlyOneSlot) {
       try {
-        usedSlots = await appState.communicator!.getUsedSlots();
+        usedSlots = await appState.communicator!.getSlotTagTypes();
       } catch (_) {
         try {
           await appState.communicator!.getFirmwareVersion();
@@ -63,43 +65,40 @@ class SlotManagerPageState extends State<SlotManagerPage> {
       } catch (_) {}
     }
 
-    if (currentFunctionIndex < 8) {
-      slotData[currentFunctionIndex]['hfName'] = "";
-      slotData[currentFunctionIndex]['lfName'] = "";
+    if (index < 8) {
+      slotData[index] = SlotNames();
 
       for (var i = 0; i < 2; i++) {
         try {
-          slotData[currentFunctionIndex]['hfName'] = await appState
-              .communicator!
-              .getSlotTagName(currentFunctionIndex, TagFrequency.hf);
-          break;
+          String name = (await appState.communicator!
+                  .getSlotTagName(index, TagFrequency.hf))
+              .trim();
+          if (name.isEmpty) {
+            slotData[index].hf = localizations.empty;
+          } else {
+            slotData[index].hf = name;
+          }
         } catch (_) {}
-      }
 
-      if (slotData[currentFunctionIndex]['hfName']!.isEmpty) {
-        slotData[currentFunctionIndex]['hfName'] = localizations.empty;
-      }
-
-      for (var i = 0; i < 2; i++) {
         try {
-          slotData[currentFunctionIndex]['lfName'] = await appState
-              .communicator!
-              .getSlotTagName(currentFunctionIndex, TagFrequency.lf);
-          break;
+          String name = (await appState.communicator!
+                  .getSlotTagName(index, TagFrequency.lf))
+              .trim();
+          if (name.isEmpty) {
+            slotData[index].lf = localizations.empty;
+          } else {
+            slotData[index].lf = name;
+          }
         } catch (_) {}
-      }
-
-      if (slotData[currentFunctionIndex]['lfName']!.isEmpty) {
-        slotData[currentFunctionIndex]['lfName'] = localizations.empty;
       }
 
       if (!onlyOneSlot) {
         setState(() {
-          currentFunctionIndex++;
+          index++;
         });
       } else {
         setState(() {
-          currentFunctionIndex = 8;
+          index = 8;
         });
       }
     }
@@ -108,7 +107,7 @@ class SlotManagerPageState extends State<SlotManagerPage> {
   void refreshSlot(int slot) {
     setUploadState(-1);
     setState(() {
-      currentFunctionIndex = slot;
+      index = slot;
       onlyOneSlot = true;
     });
     var appState = context.read<ChameleonGUIState>();
@@ -123,9 +122,165 @@ class SlotManagerPageState extends State<SlotManagerPage> {
     appState.changesMade();
   }
 
+  Future<void> onTap(CardSave card, dynamic close) async {
+    var appState = Provider.of<ChameleonGUIState>(context, listen: false);
+    var localizations = AppLocalizations.of(context)!;
+
+    if (isMifareClassic(card.tag)) {
+      close(context, card.name);
+      setUploadState(0);
+      var isEV1 = chameleonTagSaveCheckForMifareClassicEV1(card);
+      if (isEV1) {
+        card.tag = TagType.mifare2K;
+      }
+
+      await appState.communicator!.setReaderDeviceMode(false);
+      await appState.communicator!
+          .enableSlot(gridPosition, TagFrequency.hf, true);
+      await appState.communicator!.activateSlot(gridPosition);
+      await appState.communicator!.setSlotType(gridPosition, card.tag);
+      await appState.communicator!.setDefaultDataToSlot(gridPosition, card.tag);
+      var cardData = CardData(
+          uid: hexToBytes(card.uid),
+          atqa: card.atqa,
+          sak: card.sak,
+          ats: card.ats);
+      await appState.communicator!.setMf1AntiCollision(cardData);
+
+      List<int> blockChunk = [];
+      int lastSend = 0;
+
+      for (var blockOffset = 0;
+          blockOffset <
+              mfClassicGetBlockCount(
+                  chameleonTagTypeGetMfClassicType(card.tag));
+          blockOffset++) {
+        if ((card.data.length > blockOffset &&
+                card.data[blockOffset].isEmpty) ||
+            blockChunk.length >= 128) {
+          if (blockChunk.isNotEmpty) {
+            await appState.communicator!
+                .setMf1BlockData(lastSend, Uint8List.fromList(blockChunk));
+            blockChunk = [];
+            lastSend = blockOffset;
+          }
+        }
+
+        if (card.data.length > blockOffset) {
+          blockChunk.addAll(card.data[blockOffset]);
+        }
+
+        setUploadState((blockOffset /
+                mfClassicGetBlockCount(
+                    chameleonTagTypeGetMfClassicType(card.tag)) *
+                100)
+            .round());
+        await asyncSleep(1);
+      }
+
+      if (blockChunk.isNotEmpty) {
+        await appState.communicator!
+            .setMf1BlockData(lastSend, Uint8List.fromList(blockChunk));
+      }
+
+      setUploadState(100);
+
+      await appState.communicator!.setSlotTagName(
+          gridPosition,
+          (card.name.isEmpty) ? localizations.no_name : card.name,
+          TagFrequency.hf);
+      await appState.communicator!.saveSlotData();
+      appState.changesMade();
+      refreshSlot(gridPosition);
+    } else if (card.tag == TagType.em410X) {
+      close(context, card.name);
+      await appState.communicator!.setReaderDeviceMode(false);
+      await appState.communicator!
+          .enableSlot(gridPosition, TagFrequency.lf, true);
+      await appState.communicator!.activateSlot(gridPosition);
+      await appState.communicator!.setSlotType(gridPosition, card.tag);
+      await appState.communicator!.setDefaultDataToSlot(gridPosition, card.tag);
+      await appState.communicator!.setEM410XEmulatorID(hexToBytes(card.uid));
+      await appState.communicator!.setSlotTagName(
+          gridPosition,
+          (card.name.isEmpty) ? localizations.no_name : card.name,
+          TagFrequency.lf);
+      await appState.communicator!.saveSlotData();
+      appState.changesMade();
+      refreshSlot(gridPosition);
+    } else if (isMifareUltralight(card.tag)) {
+      close(context, card.name);
+      setUploadState(0);
+
+      await appState.communicator!.setReaderDeviceMode(false);
+      await appState.communicator!
+          .enableSlot(gridPosition, TagFrequency.hf, true);
+      await appState.communicator!.activateSlot(gridPosition);
+      await appState.communicator!.setSlotType(gridPosition, card.tag);
+      await appState.communicator!.setDefaultDataToSlot(gridPosition, card.tag);
+      var cardData = CardData(
+          uid: hexToBytes(card.uid),
+          atqa: card.atqa,
+          sak: card.sak,
+          ats: card.ats);
+      await appState.communicator!.setMf1AntiCollision(cardData);
+
+      for (var page = 0; page < mfUltralightGetPagesCount(card.tag); page++) {
+        await appState.communicator!
+            .mf0EmulatorWritePages(page, card.data[page]);
+
+        setUploadState(
+            (page / mfUltralightGetPagesCount(card.tag) * 100).round());
+
+        await asyncSleep(1);
+      }
+
+      if (card.extraData.ultralightVersion.isNotEmpty) {
+        await appState.communicator!
+            .mf0EmulatorSetVersionData(card.extraData.ultralightVersion);
+      }
+
+      if (card.extraData.ultralightSignature.isNotEmpty) {
+        await appState.communicator!
+            .mf0EmulatorSetSignatureData(card.extraData.ultralightSignature);
+      }
+
+      setUploadState(100);
+
+      await appState.communicator!.setSlotTagName(
+          gridPosition,
+          (card.name.isEmpty) ? localizations.no_name : card.name,
+          TagFrequency.hf);
+      await appState.communicator!.saveSlotData();
+      appState.changesMade();
+      refreshSlot(gridPosition);
+    } else {
+      appState.log!.e("Can't write this card type yet.");
+      close(context, card.name);
+    }
+  }
+
+  Future<String?> cardSelectDialog(BuildContext context) {
+    var appState = context.read<ChameleonGUIState>();
+    var tags = appState.sharedPreferencesProvider.getCards();
+
+    // Don't allow user to upload more tags while already uploading dump
+    if (progress != -1) {
+      return Future.value("");
+    }
+
+    tags.sort((a, b) => a.name.compareTo(b.name));
+
+    return showSearch<String>(
+      context: context,
+      delegate: CardSearchDelegate(cards: tags, onTap: onTap),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     var localizations = AppLocalizations.of(context)!;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(localizations.slot_manager),
@@ -141,19 +296,23 @@ class SlotManagerPageState extends State<SlotManagerPage> {
                   child: AlignedGridView.count(
                       padding: const EdgeInsets.all(20),
                       crossAxisCount:
-                          MediaQuery.of(context).size.width >= 600 ? 2 : 1,
+                          MediaQuery.of(context).size.width >= 700 ? 2 : 1,
                       crossAxisSpacing: 10,
                       mainAxisSpacing: 10,
                       itemCount: 8,
                       itemBuilder: (BuildContext context, int index) {
                         return Container(
-                          constraints: const BoxConstraints(maxHeight: 120),
+                          constraints: const BoxConstraints(
+                              maxHeight: 160, minHeight: 100),
                           child: ElevatedButton(
                             onPressed: () {
-                              cardSelectDialog(context, index);
+                              setState(() {
+                                gridPosition = index;
+                              });
+                              cardSelectDialog(context);
                             },
                             style: ButtonStyle(
-                              shape: MaterialStateProperty.all<
+                              shape: WidgetStateProperty.all<
                                   RoundedRectangleBorder>(
                                 RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(18.0),
@@ -169,21 +328,31 @@ class SlotManagerPageState extends State<SlotManagerPage> {
                                   Row(
                                     children: [
                                       Icon(Icons.nfc,
-                                          color: enabledSlots[index]
+                                          color: enabledSlots[index].any()
                                               ? Colors.green
                                               : Colors.deepOrange),
                                       const SizedBox(width: 5),
-                                      Text("${localizations.slot} ${index + 1}")
+                                      Expanded(
+                                        child: Text(
+                                          "${localizations.slot} ${index + 1}",
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
                                     ],
                                   ),
-                                  const SizedBox(height: 10),
+                                  const SizedBox(height: 20),
                                   Row(
                                     mainAxisAlignment: MainAxisAlignment.start,
                                     children: [
                                       const Icon(Icons.credit_card),
                                       const SizedBox(width: 5),
-                                      Text(
-                                          "${slotData[index]['hfName'] ?? localizations.unknown} (${chameleonTagToString(usedSlots[index].$1)})")
+                                      Expanded(
+                                          child: Text(
+                                        "${slotData[index].hf} (${chameleonTagToString(usedSlots[index].hf)})",
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ))
                                     ],
                                   ),
                                   Row(
@@ -195,9 +364,13 @@ class SlotManagerPageState extends State<SlotManagerPage> {
                                           children: [
                                             const Icon(Icons.wifi),
                                             const SizedBox(width: 5),
-                                            Text(
-                                              "${slotData[index]['lfName'] ?? localizations.unknown} (${chameleonTagToString(usedSlots[index].$2)})",
-                                            ),
+                                            Expanded(
+                                                child: Text(
+                                              "${slotData[index].lf} (${chameleonTagToString(usedSlots[index].lf)})",
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              softWrap: true,
+                                            ))
                                           ],
                                         ),
                                       ),
@@ -232,256 +405,6 @@ class SlotManagerPageState extends State<SlotManagerPage> {
           ],
         ),
       ),
-    );
-  }
-
-  Future<String?> cardSelectDialog(BuildContext context, int gridPosition) {
-    var appState = context.read<ChameleonGUIState>();
-    var tags = appState.sharedPreferencesProvider.getCards();
-
-    // Don't allow user to upload more tags while already uploading dump
-    if (progress != -1) {
-      return Future.value("");
-    }
-
-    tags.sort((a, b) => a.name.compareTo(b.name));
-
-    return showSearch<String>(
-      context: context,
-      delegate:
-          CardSearchDelegate(tags, gridPosition, refreshSlot, setUploadState),
-    );
-  }
-}
-
-enum SearchFilter { all, hf, lf }
-
-class CardSearchDelegate extends SearchDelegate<String> {
-  final List<CardSave> cards;
-  final int gridPosition;
-  final dynamic refresh;
-  final dynamic setUploadState;
-  SearchFilter filter = SearchFilter.all;
-
-  CardSearchDelegate(
-      this.cards, this.gridPosition, this.refresh, this.setUploadState);
-
-  @override
-  List<Widget> buildActions(BuildContext context) {
-    var localizations = AppLocalizations.of(context)!;
-    return [
-      StatefulBuilder(
-        builder: (BuildContext context, StateSetter setState) {
-          return DropdownButton(
-            items: [
-              DropdownMenuItem(
-                value: SearchFilter.all,
-                child: Text(localizations.all),
-              ),
-              DropdownMenuItem(
-                value: SearchFilter.hf,
-                child: Text(localizations.hf),
-              ),
-              DropdownMenuItem(
-                value: SearchFilter.lf,
-                child: Text(localizations.lf),
-              ),
-            ],
-            onChanged: (SearchFilter? value) {
-              if (value != null) {
-                setState(() {
-                  filter = value;
-                });
-              }
-            },
-            value: filter,
-          );
-        },
-      ),
-      IconButton(
-        icon: const Icon(Icons.clear),
-        onPressed: () {
-          query = '';
-        },
-      ),
-    ];
-  }
-
-  @override
-  Widget buildLeading(BuildContext context) {
-    return IconButton(
-      icon: const Icon(Icons.arrow_back),
-      onPressed: () {
-        close(context, '');
-      },
-    );
-  }
-
-  @override
-  Widget buildResults(BuildContext context) {
-    final results = cards.where((card) =>
-        (((card.name.toLowerCase().contains(query.toLowerCase())) ||
-                (chameleonTagToString(card.tag)
-                    .toLowerCase()
-                    .contains(query.toLowerCase()))) &&
-            ((filter == SearchFilter.all) ||
-                (filter == SearchFilter.hf &&
-                    chameleonTagToFrequency(card.tag) == TagFrequency.hf) ||
-                (filter == SearchFilter.lf &&
-                    chameleonTagToFrequency(card.tag) == TagFrequency.lf))));
-
-    return ListView.builder(
-      itemCount: results.length,
-      itemBuilder: (BuildContext context, int index) {
-        final card = results.elementAt(index);
-        return Column(
-          children: [
-            ElevatedButton(
-              onPressed: () {
-                // Set card here
-                Navigator.pop(context);
-              },
-              child: ListTile(
-                leading: Icon(
-                    (chameleonTagToFrequency(card.tag) == TagFrequency.hf)
-                        ? Icons.credit_card
-                        : Icons.wifi,
-                    color: card.color),
-                title: Text(card.name),
-                subtitle: Text(chameleonTagToString(card.tag)),
-              ),
-            ),
-            const SizedBox(height: 10),
-          ],
-        );
-      },
-    );
-  }
-
-  @override
-  Widget buildSuggestions(BuildContext context) {
-    var localizations = AppLocalizations.of(context)!;
-    final results = cards.where((card) =>
-        (((card.name.toLowerCase().contains(query.toLowerCase())) ||
-                (chameleonTagToString(card.tag)
-                    .toLowerCase()
-                    .contains(query.toLowerCase()))) &&
-            ((filter == SearchFilter.all) ||
-                (filter == SearchFilter.hf &&
-                    chameleonTagToFrequency(card.tag) == TagFrequency.hf) ||
-                (filter == SearchFilter.lf &&
-                    chameleonTagToFrequency(card.tag) == TagFrequency.lf))));
-
-    var appState = context.read<ChameleonGUIState>();
-
-    return ListView.builder(
-      itemCount: results.length,
-      itemBuilder: (BuildContext context, int index) {
-        final card = results.elementAt(index);
-        return ListTile(
-          leading: Icon(
-              (chameleonTagToFrequency(card.tag) == TagFrequency.hf)
-                  ? Icons.credit_card
-                  : Icons.wifi,
-              color: card.color),
-          title: Text(card.name),
-          subtitle: Text(chameleonTagToString(card.tag) +
-              ((chameleonTagSaveCheckForMifareClassicEV1(card)) ? " EV1" : "")),
-          onTap: () async {
-            if ([
-              TagType.mifareMini,
-              TagType.mifare1K,
-              TagType.mifare2K,
-              TagType.mifare4K
-            ].contains(card.tag)) {
-              close(context, card.name);
-              setUploadState(0);
-              var isEV1 = chameleonTagSaveCheckForMifareClassicEV1(card);
-              if (isEV1) {
-                card.tag = TagType.mifare2K;
-              }
-
-              await appState.communicator!.setReaderDeviceMode(false);
-              await appState.communicator!.enableSlot(gridPosition, true);
-              await appState.communicator!.activateSlot(gridPosition);
-              await appState.communicator!.setSlotType(gridPosition, card.tag);
-              await appState.communicator!
-                  .setDefaultDataToSlot(gridPosition, card.tag);
-              var cardData = CardData(
-                  uid: hexToBytes(card.uid.replaceAll(" ", "")),
-                  atqa: card.atqa,
-                  sak: card.sak);
-              await appState.communicator!.setMf1AntiCollision(cardData);
-
-              List<int> blockChunk = [];
-              int lastSend = 0;
-
-              for (var blockOffset = 0;
-                  blockOffset <
-                      mfClassicGetBlockCount(
-                          chameleonTagTypeGetMfClassicType(card.tag));
-                  blockOffset++) {
-                if ((card.data.length > blockOffset &&
-                        card.data[blockOffset].isEmpty) ||
-                    blockChunk.length >= 128) {
-                  if (blockChunk.isNotEmpty) {
-                    await appState.communicator!.setMf1BlockData(
-                        lastSend, Uint8List.fromList(blockChunk));
-                    blockChunk = [];
-                    lastSend = blockOffset;
-                  }
-                }
-
-                if (card.data.length > blockOffset) {
-                  blockChunk.addAll(card.data[blockOffset]);
-                }
-
-                setUploadState((blockOffset /
-                        mfClassicGetBlockCount(
-                            chameleonTagTypeGetMfClassicType(card.tag)) *
-                        100)
-                    .round());
-                await asyncSleep(1);
-              }
-
-              if (blockChunk.isNotEmpty) {
-                await appState.communicator!
-                    .setMf1BlockData(lastSend, Uint8List.fromList(blockChunk));
-              }
-
-              setUploadState(100);
-
-              await appState.communicator!.setSlotTagName(
-                  gridPosition,
-                  (card.name.isEmpty) ? localizations.no_name : card.name,
-                  TagFrequency.hf);
-              await appState.communicator!.saveSlotData();
-              appState.changesMade();
-              refresh(gridPosition);
-            } else if (card.tag == TagType.em410X) {
-              close(context, card.name);
-              await appState.communicator!.setReaderDeviceMode(false);
-              await appState.communicator!.enableSlot(gridPosition, true);
-              await appState.communicator!.activateSlot(gridPosition);
-              await appState.communicator!.setSlotType(gridPosition, card.tag);
-              await appState.communicator!
-                  .setDefaultDataToSlot(gridPosition, card.tag);
-              await appState.communicator!.setEM410XEmulatorID(
-                  hexToBytes(card.uid.replaceAll(" ", "")));
-              await appState.communicator!.setSlotTagName(
-                  gridPosition,
-                  (card.name.isEmpty) ? localizations.no_name : card.name,
-                  TagFrequency.lf);
-              await appState.communicator!.saveSlotData();
-              appState.changesMade();
-              refresh(gridPosition);
-            } else {
-              appState.log!.e("Can't write this card type yet.");
-              close(context, card.name);
-            }
-          },
-        );
-      },
     );
   }
 }

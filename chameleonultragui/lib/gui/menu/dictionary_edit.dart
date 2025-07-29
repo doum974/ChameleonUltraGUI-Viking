@@ -3,19 +3,18 @@ import 'package:chameleonultragui/sharedprefsprovider.dart';
 import 'dart:typed_data';
 import 'package:provider/provider.dart';
 import 'package:chameleonultragui/main.dart';
-import 'package:uuid/uuid.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 
 // Localizations
-import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 
 class DictionaryEditMenu extends StatefulWidget {
-  final Dictionary dict;
+  final Dictionary dictionary;
   final bool isNew;
 
-  const DictionaryEditMenu({Key? key, required this.dict, this.isNew = false})
-      : super(key: key);
+  const DictionaryEditMenu(
+      {super.key, required this.dictionary, this.isNew = false});
 
   @override
   DictionaryEditMenuState createState() => DictionaryEditMenuState();
@@ -57,11 +56,11 @@ class DictionaryEditMenuState extends State<DictionaryEditMenu> {
   @override
   void initState() {
     super.initState();
-    nameController = TextEditingController(text: widget.dict.name);
+    nameController = TextEditingController(text: widget.dictionary.name);
     keysController =
-        TextEditingController(text: dictToString(widget.dict.keys));
-    pickerColor = widget.dict.color;
-    currentColor = widget.dict.color;
+        TextEditingController(text: dictToString(widget.dictionary.keys));
+    pickerColor = widget.dictionary.color;
+    currentColor = widget.dictionary.color;
   }
 
   @override
@@ -87,58 +86,63 @@ class DictionaryEditMenuState extends State<DictionaryEditMenu> {
                 decoration: InputDecoration(
                     labelText: localizations.name,
                     hintText: localizations.enter_dict_name,
-                    prefix: IconButton(
-                      icon: Icon(Icons.key, color: currentColor),
-                      onPressed: () async {
-                        showDialog(
-                          context: context,
-                          builder: (BuildContext context) {
-                            return AlertDialog(
-                              title: Text('${localizations.pick_color}!'),
-                              content: SingleChildScrollView(
-                                child: ColorPicker(
-                                  pickerColor: pickerColor,
-                                  onColorChanged: (Color color) {
-                                    setState(() {
-                                      pickerColor = color;
-                                    });
-                                  },
-                                  pickerAreaHeightPercent: 0.8,
+                    prefix: Transform(
+                      transform: Matrix4.translationValues(0, 7, 0),
+                      child: IconButton(
+                        icon: Icon(Icons.key, color: currentColor),
+                        onPressed: () async {
+                          showDialog(
+                            context: context,
+                            builder: (BuildContext context) {
+                              return AlertDialog(
+                                title: Text('${localizations.pick_color}!'),
+                                content: SingleChildScrollView(
+                                  child: ColorPicker(
+                                    pickerColor: pickerColor,
+                                    onColorChanged: (Color color) {
+                                      setState(() {
+                                        pickerColor = color;
+                                      });
+                                    },
+                                    pickerAreaHeightPercent: 0.8,
+                                  ),
                                 ),
-                              ),
-                              actions: <Widget>[
-                                TextButton(
-                                  onPressed: () {
-                                    setState(() => currentColor =
-                                        pickerColor = Colors.deepOrange);
-                                    Navigator.pop(context);
-                                  },
-                                  child: Text(localizations.reset_default),
-                                ),
-                                TextButton(
-                                  onPressed: () {
-                                    Navigator.pop(context);
-                                  },
-                                  child: Text(localizations.cancel),
-                                ),
-                                TextButton(
-                                  child: Text(localizations.ok),
-                                  onPressed: () {
-                                    setState(() => currentColor = pickerColor);
-                                    Navigator.pop(context);
-                                  },
-                                ),
-                              ],
-                            );
-                          },
-                        );
-                      },
+                                actions: <Widget>[
+                                  TextButton(
+                                    onPressed: () {
+                                      setState(() => currentColor =
+                                          pickerColor = Colors.deepOrange);
+                                      Navigator.pop(context);
+                                    },
+                                    child: Text(localizations.reset_default),
+                                  ),
+                                  TextButton(
+                                    onPressed: () {
+                                      Navigator.pop(context);
+                                    },
+                                    child: Text(localizations.cancel),
+                                  ),
+                                  TextButton(
+                                    child: Text(localizations.ok),
+                                    onPressed: () {
+                                      setState(
+                                          () => currentColor = pickerColor);
+                                      Navigator.pop(context);
+                                    },
+                                  ),
+                                ],
+                              );
+                            },
+                          );
+                        },
+                      ),
                     )),
               ),
               TextFormField(
                 maxLines: null,
                 controller: keysController,
-                style: const TextStyle(fontFamily: 'RobotoMono', fontSize: 16.0),
+                style:
+                    const TextStyle(fontFamily: 'RobotoMono', fontSize: 16.0),
                 decoration: InputDecoration(
                   labelText: localizations.keys,
                   hintText: localizations.enter_dict_keys,
@@ -162,7 +166,7 @@ class DictionaryEditMenuState extends State<DictionaryEditMenu> {
             }
 
             Dictionary dict = Dictionary(
-              id: const Uuid().v4(),
+              id: widget.isNew ? null : widget.dictionary.id,
               name: nameController.text,
               keys: stringToDict(keysController.text),
               color: currentColor,
@@ -177,7 +181,7 @@ class DictionaryEditMenuState extends State<DictionaryEditMenu> {
               output.add(dict);
             } else {
               for (var dictTest in dictionaries) {
-                if (dictTest.id != widget.dict.id) {
+                if (dictTest.id != widget.dictionary.id) {
                   output.add(dictTest);
                 } else {
                   output.add(dict);
