@@ -1,4 +1,4 @@
-name: Build ChameleonUltra Firmware
+name: Build ChameleonUltra Firmware (DFU Only)
 
 on:
   push:
@@ -6,23 +6,27 @@ on:
       - lf-viking-support
 
 jobs:
-  build:
+  build-firmware:
+    name: Build DFU Firmware
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
+      - name: Checkout source code
         uses: actions/checkout@v3
 
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi make cmake libusb-1.0-0-dev
-
-      - name: Build firmware
+      - name: Install ARM GCC and dependencies
         run: |
-          mkdir build
+          sudo apt update
+          sudo apt install -y build-essential gcc-arm-none-eabi libusb-1.0-0-dev cmake make
+
+      - name: Create build directory and compile
+        run: |
+          mkdir -p build
           cd build
           cmake ..
           make
 
-      - name: Upload DFU file
+      - name: Upload DFU firmware
         uses: actions/upload-artifact@v3
         with:
           name: Firmware .ultra APP DFU Package
